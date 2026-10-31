@@ -21,9 +21,21 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PUBLIC DISASTER-MAPPING ENDPOINTS — no authentication required
+    # (live map, evacuation center search, capacities / statuses, safe routes).
+    # ─────────────────────────────────────────────────────────────────────────
     path('', include('apps.core.urls')),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # RESTRICTED ENDPOINTS — authentication + staff (creator) required.
+    # Monitoring dashboards (Dashboard), evacuee lists (Evacuees) and user
+    # management live behind `@staff_required` / `@login_required` protected views.
+    # ─────────────────────────────────────────────────────────────────────────
     path('users/', include('apps.users.urls')),
     path('info/', include('apps.info.urls')),
+    path('evacuation/', include('apps.evacuation.urls')),
 ]
 
 if settings.DEBUG:

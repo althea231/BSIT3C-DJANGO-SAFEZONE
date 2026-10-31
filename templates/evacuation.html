@@ -1,0 +1,1160 @@
+{% extends "theme/base.html" %}
+{% block content %}
+<div class="container-xl">
+  <div class="page-header d-print-none" aria-label="Page header">
+    <div class="container-xl">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="page-pretitle">Overview</div>
+          <div class="d-flex align-items-center gap-3 flex-wrap d-none d-md-flex">
+            <h2 class="page-title mb-0">Evacuation Center Availability</h2>
+          </div>
+          <h2 class="page-title mb-0 d-md-none">Evacuation Center Availability</h2>
+        </div>
+      </div>
+    </div>
+  </div>
+  <br>
+
+  <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-2 mb-1">
+    <form method="GET" class="w-100" style="max-width: 420px;">
+      <div class="input-group">
+        <span class="input-group-text"><i class="ti ti-search"></i></span>
+        <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="{% if user.is_authenticated and user.is_staff %}Search by name, address, or contact person...{% else %}Search evacuation centers by name...{% endif %}">
+        {% if query %}
+        <a href="{% url 'evacuation:evacuation_list' %}" class="btn btn-outline-secondary">Clear</a>
+        {% endif %}
+        <button type="submit" class="btn btn-primary">Search</button>
+      </div>
+    </form>
+
+    {% if user.is_authenticated and user.is_staff %}
+    <button type="button" class="btn btn-primary mt-n4" data-bs-toggle="modal" data-bs-target="#evacuationModal" data-mode="create">
+      <i class='fas fa-plus-circle me-2'></i> Add Center
+    </button>
+    <a href="{% url 'evacuation:evacuee_report_csv' %}" class="btn btn-outline-danger mt-n4">
+      <i class="fas fa-file-download me-2"></i> Export Evacuee Report
+    </a>
+    {% endif %}
+  </div>
+
+  <div class="toast-container position-fixed top-0 end-0 p-3" id="evacuationToastContainer" aria-live="polite" aria-atomic="true">
+    {% for message in messages %}
+    <div class="toast bg-info-lt" role="status" aria-atomic="true" data-bs-delay="4000" style="--tblr-toast-color: #000;">
+      <div class="d-flex">
+        <div class="toast-body">{{ message }}</div>
+        <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div id="evacuationAlert" class="alert alert-danger d-none" role="alert"></div>
+
+  <style>
+    /* Map container - fixed height so Leaflet always has a visible area */
+    .map-container {
+      height: 400px;
+      min-height: 400px;
+      width: 100%;
+      overflow: hidden;
+      position: relative;
+    }
+    @media (max-width: 768px) {
+      .map-container {
+        height: 300px;
+        min-height: 300px;
+      }
+    }
+    /* Leaflet map - fills its container */
+    #evacuationMap {
+      height: 100%;
+      width: 100%;
+      position: relative;
+      overflow: hidden;
+      z-index: 0;
+    }
+    /* Marker styles */
+    .evacuation-center-marker {
+      background: transparent;
+      border: none;
+    }
+    .evacuation-center-marker svg {
+      display: block;
+    }
+  </style>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <i class="ti ti-map-pin me-1"></i> Evacuation Center Map
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="map-container">
+        <div id="evacuationMap"></div>
+      </div>
+      <div id="evacuationMapError" class="alert alert-danger d-none mt-2" role="alert"></div>
+      <div id="evacuationRouteSummary" class="alert alert-info d-none mt-3">
+        <div id="evacuationRouteNearest" class="fw-semibold mb-1 d-none">
+          <i class="ti ti-user-check me-1"></i> Nearest Evacuation Center:
+        </div>
+        <i class="ti ti-route me-2"></i>
+        <span id="evacuationRouteDistance" class="fw-semibold"></span>
+        <span id="evacuationRouteDuration" class="text-muted ms-2"></span>
+      </div>
+      <div id="evacuationRouteError" class="alert alert-danger d-none mt-3" role="alert"></div>
+      <div class="mt-3 d-flex gap-2">
+        <select id="evacuationDestinationSelect" class="form-select">
+          <option value="">Select an evacuation center as destination…</option>
+          {% for center in centers %}
+          <option value="{{ center.id }}" data-latitude="{{ center.latitude }}" data-longitude="{{ center.longitude }}" data-status="{{ center.status }}">{{ center.name }}</option>
+          {% endfor %}
+        </select>
+        <button type="button" id="evacuationUseLocationBtn" class="btn btn-outline-primary">
+          <i class="ti ti-crosshairs me-1"></i> Use my location
+        </button>
+        <button type="button" id="evacuationPlanRouteBtn" class="btn btn-primary">
+          <i class="ti ti-road me-1"></i> Plan safe route
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        All Evacuation Centers
+        {% if query %}
+        <span class="text-muted fw-normal">— search results for "{{ query }}"</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-vcenter table-hover card-table text-nowrap" id="evacuationTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            {% if user.is_authenticated and user.is_staff %}
+            <th>Address</th>
+            {% endif %}
+            <th>Occupancy</th>
+            <th>Status</th>
+            {% if user.is_authenticated and user.is_staff %}
+            <th>Contact Person</th>
+            <th>Contact Number</th>
+            {% endif %}
+            <th>Evacuees</th>
+            {% if user.is_authenticated and user.is_staff %}
+            <th class="w-1">Actions</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody id="evacuationTableBody">
+        {% for center in centers %}
+        <tr data-row-id="{{ center.id }}">
+            <td class="text-muted">{{ forloop.counter0|add:centers.start_index }}</td>
+            <td class="fw-semibold">{{ center.name }}</td>
+            {% if user.is_authenticated and user.is_staff %}
+            <td class="text-muted">{{ center.address }}</td>
+            {% endif %}
+            <td><span class="badge bg-primary-lt text-primary">{{ center.current_occupancy }} / {{ center.capacity }}</span></td>
+            <td>
+              {% if center.status == 'available' %}
+              <span class="badge bg-success-lt text-success">Available</span>
+              {% elif center.status == 'full' %}
+              <span class="badge bg-warning-lt text-warning">Full</span>
+              {% else %}
+              <span class="badge bg-danger-lt text-danger">Closed</span>
+              {% endif %}
+            </td>
+            {% if user.is_authenticated and user.is_staff %}
+            <td class="text-muted">{{ center.contact_person|default:"—" }}</td>
+            <td class="text-muted">{{ center.contact_number|default:"—" }}</td>
+            {% endif %}
+            <td>
+              <a href="{% url 'evacuation:public_evacuee_list' center.id %}" class="btn btn-sm btn-outline-secondary" title="View checked-in evacuees">
+                <i class="fas fa-user-check me-1"></i> View Evacuees
+              </a>
+            </td>
+            {% if user.is_authenticated and user.is_staff %}
+            <td>
+              <div class="d-flex gap-1">
+                <button type="button" class="btn btn-ghost-secondary btn-icon btn-sm" data-bs-toggle="modal" data-bs-target="#evacuationModal" data-mode="edit" data-id="{{ center.id }}" data-name="{{ center.name }}" data-address="{{ center.address }}" data-capacity="{{ center.capacity }}" data-current_occupancy="{{ center.current_occupancy }}" data-status="{{ center.status }}" data-contact_person="{{ center.contact_person }}" data-contact_number="{{ center.contact_number }}" data-supplies="{{ center.supplies }}" data-latitude="{{ center.latitude }}" data-longitude="{{ center.longitude }}" data-name="{{ center.name }}" title="Edit">
+                  <i class="fas fa-edit text-primary"></i>
+                </button>
+                <button type="button" class="btn btn-ghost-secondary btn-icon btn-sm" data-bs-toggle="modal" data-bs-target="#deleteEvacuationModal" data-id="{{ center.id }}" data-name="{{ center.name }}" title="Delete">
+                  <i class="fas fa-trash-alt text-danger"></i>
+                </button>
+              </div>
+            </td>
+            {% endif %}
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="{% if user.is_authenticated and user.is_staff %}9{% else %}5{% endif %}">
+                <div class="empty py-5">
+                    <div class="empty-icon">
+                        <i class="fas fa-house-chimney fa-2x text-muted"></i>
+                    </div>
+                    <p class="empty-title">No evacuation centers found</p>
+                    <p class="empty-subtitle">Try adjusting your search or add a new center.</p>
+                    {% if user.is_authenticated and user.is_staff %}
+                    <div class="empty-action">
+                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#evacuationModal" data-mode="create">
+                            <i class="fas fa-plus-circle me-2"></i> Add Center
+                        </button>
+                    </div>
+                    {% endif %}
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if centers.paginator.num_pages > 1 %}
+    <div class="card-footer d-flex align-items-center">
+      <p class="m-0 text-muted">
+        Showing <span class="fw-medium">{{ centers.start_index }}</span>
+        to <span class="fw-medium">{{ centers.end_index }}</span>
+        of <span class="fw-medium">{{ centers.paginator.count }}</span> records
+      </p>
+      <ul class="pagination m-0 ms-auto">
+        {% if centers.has_previous %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ centers.previous_page_number }}{% if query %}&q={{ query }}{% endif %}">
+            <i class="ti ti-chevron-left"></i> prev
+          </a>
+        </li>
+        {% endif %}
+        {% for num in centers.paginator.page_range %}
+        <li class="page-item {% if centers.number == num %}active{% endif %}">
+          <a class="page-link" href="?page={{ num }}{% if query %}&q={{ query }}{% endif %}">{{ num }}</a>
+        </li>
+        {% endfor %}
+        {% if centers.has_next %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ centers.next_page_number }}{% if query %}&q={{ query }}{% endif %}">
+            next <i class="ti ti-chevron-right"></i>
+          </a>
+        </li>
+        {% endif %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if user.is_authenticated and user.is_staff %}
+<div class="modal modal-blur fade" id="evacuationModal" tabindex="-1">
+  <div class="modal-dialog modal-md modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="evacuationModalTitle">Add Evacuation Center</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="evacuationForm">
+        {% csrf_token %}
+        <input type="hidden" name="id" id="evacuation_id">
+        <div class="modal-body">
+          <div id="evacuationFormError" class="alert alert-danger d-none"></div>
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label">Center Name</label>
+              <input type="text" name="name" id="evacuation_name" class="form-control" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Address</label>
+              <input type="text" name="address" id="evacuation_address" class="form-control" required>
+            </div>
+            <!-- Hidden fields that carry lat/lng to the server -->
+            <input type="hidden" name="latitude" id="evacuation_latitude">
+            <input type="hidden" name="longitude" id="evacuation_longitude">
+            <div class="col-12">
+              <label class="form-label">
+                <i class="ti ti-map-pin me-1"></i> Pin Location on Map
+                <span class="text-muted fw-normal">(click the map to place the pin)</span>
+              </label>
+              <div id="evacuationPickerMap" style="height:260px;width:100%;border-radius:6px;border:1px solid var(--tblr-border-color);overflow:hidden;"></div>
+              <div id="evacuationPickerCoords" class="form-text text-muted mt-1">No location pinned yet.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Capacity</label>
+              <input type="number" name="capacity" id="evacuation_capacity" class="form-control" min="1" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Current Occupancy</label>
+              <input type="number" name="current_occupancy" id="evacuation_current_occupancy" class="form-control" min="0" value="0" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Status</label>
+              <select name="status" id="evacuation_status" class="form-select" required>
+                <option value="available">Available</option>
+                <option value="full">Full</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Contact Person <span class="text-muted">(optional)</span></label>
+              <input type="text" name="contact_person" id="evacuation_contact_person" class="form-control">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Contact Number <span class="text-muted">(optional)</span></label>
+              <input type="text" name="contact_number" id="evacuation_contact_number" class="form-control">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Available Supplies <span class="text-muted">(optional)</span></label>
+              <textarea name="supplies" id="evacuation_supplies" class="form-control" rows="2" placeholder="e.g. Water, food packs, blankets, first aid kits"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="evacuationSubmitBtn">Save Center</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal modal-blur fade" id="deleteEvacuationModal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Delete Evacuation Center</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete <strong id="deleteEvacuationName"></strong>?</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmDeleteEvacuationBtn">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.3.0/dist/maplibre-gl.css">
+<script type="importmap">
+{
+  "imports": {
+    "leaflet": "https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.esm.js",
+    "maplibre-gl": "https://unpkg.com/maplibre-gl@6.3.0/dist/maplibre-gl.mjs"
+  }
+}
+</script>
+<script type="module">
+import * as L from 'leaflet';
+import { maplibreGL } from 'https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/dist/leaflet-maplibre-gl.mjs';
+(function() {
+  const modalEl = document.getElementById('evacuationModal');
+  const deleteModalEl = document.getElementById('deleteEvacuationModal');
+  const form = document.getElementById('evacuationForm');
+  const alertBox = document.getElementById('evacuationAlert');
+  const title = document.getElementById('evacuationModalTitle');
+  const submitBtn = document.getElementById('evacuationSubmitBtn');
+  const deleteBtn = document.getElementById('confirmDeleteEvacuationBtn');
+  const deleteName = document.getElementById('deleteEvacuationName');
+  let currentCenterId = null;
+
+  document.querySelectorAll('#evacuationToastContainer .toast').forEach(function(toastEl) {
+    bootstrap.Toast.getOrCreateInstance(toastEl).show();
+  });
+
+  if (!modalEl || !deleteModalEl || !form) {
+    // Administrative modals are only rendered for staff members. Public
+    // visitors skip the add / edit / delete wiring entirely.
+    return;
+  }
+
+  function resetForm() {
+    form.reset();
+    document.getElementById('evacuation_id').value = '';
+    document.getElementById('evacuation_status').value = 'available';
+    title.textContent = 'Add Evacuation Center';
+    submitBtn.textContent = 'Save Center';
+    alertBox.classList.add('d-none');
+    alertBox.textContent = '';
+    currentCenterId = null;
+  }
+
+  modalEl.addEventListener('show.bs.modal', function(event) {
+    const button = event.relatedTarget;
+    if (!button) {
+      resetForm();
+      return;
+    }
+
+    const mode = button.getAttribute('data-mode');
+    if (mode === 'edit') {
+      const id = button.getAttribute('data-id');
+      title.textContent = 'Edit Evacuation Center';
+      submitBtn.textContent = 'Update Center';
+      currentCenterId = id;
+      document.getElementById('evacuation_id').value = id;
+      document.getElementById('evacuation_name').value = button.getAttribute('data-name');
+     document.getElementById('evacuation_address').value = button.getAttribute('data-address');
+      document.getElementById('evacuation_capacity').value = button.getAttribute('data-capacity');
+      document.getElementById('evacuation_current_occupancy').value = button.getAttribute('data-current_occupancy');
+      document.getElementById('evacuation_status').value = button.getAttribute('data-status');
+      document.getElementById('evacuation_contact_person').value = button.getAttribute('data-contact_person');
+      document.getElementById('evacuation_contact_number').value = button.getAttribute('data-contact_number');
+      document.getElementById('evacuation_supplies').value = button.getAttribute('data-supplies') || '';
+      document.getElementById('evacuation_latitude').value = button.getAttribute('data-latitude') || '';
+      document.getElementById('evacuation_longitude').value = button.getAttribute('data-longitude') || '';
+    } else {
+      resetForm();
+    }
+  });
+
+  deleteModalEl.addEventListener('show.bs.modal', function(event) {
+    const button = event.relatedTarget;
+    if (button) {
+      currentCenterId = button.getAttribute('data-id');
+      deleteName.textContent = button.getAttribute('data-name');
+    }
+  });
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(form);
+
+    fetch('{% url "evacuation:evacuation_save_ajax" %}', {
+      method: 'POST',
+      headers: {'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value},
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.error) {
+        alertBox.textContent = data.error;
+        alertBox.classList.remove('d-none');
+        return;
+      }
+      window.location.reload();
+    })
+    .catch(() => {
+      alertBox.textContent = 'Something went wrong.';
+      alertBox.classList.remove('d-none');
+    });
+  });
+
+  deleteBtn.addEventListener('click', function() {
+    if (!currentCenterId) return;
+    fetch('{% url "evacuation:evacuation_delete_ajax" 0 %}'.replace('0', currentCenterId), {
+      method: 'POST',
+      headers: {'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value}
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.status === 'deleted') {
+        window.location.reload();
+      }
+    });
+  });
+})();
+
+// ── Pin-picker map inside the Add / Edit modal ──────────────────────────────
+(function () {
+  const GALICIA_CENTER = [9.9827, 122.7193];
+  let pickerMap = null;
+  let pickerMarker = null;
+  const latInput  = document.getElementById('evacuation_latitude');
+  const lngInput  = document.getElementById('evacuation_longitude');
+  const coordsLabel = document.getElementById('evacuationPickerCoords');
+  const modalEl  = document.getElementById('evacuationModal');
+  if (!modalEl) { return; }
+
+  function updateCoordsLabel(lat, lng) {
+    coordsLabel.textContent = 'Pinned: ' + lat.toFixed(6) + ', ' + lng.toFixed(6);
+  }
+
+  function placePin(lat, lng) {
+    latInput.value  = lat;
+    lngInput.value  = lng;
+    updateCoordsLabel(lat, lng);
+    if (pickerMarker) {
+      pickerMarker.setLatLng([lat, lng]);
+    } else {
+      pickerMarker = L.marker([lat, lng], { draggable: true }).addTo(pickerMap);
+      pickerMarker.on('dragend', function () {
+        const pos = pickerMarker.getLatLng();
+        latInput.value = pos.lat;
+        lngInput.value = pos.lng;
+        updateCoordsLabel(pos.lat, pos.lng);
+      });
+    }
+  }
+
+  function initPickerMap() {
+    if (pickerMap) return; // already initialised
+    pickerMap = L.map('evacuationPickerMap', {
+      center: GALICIA_CENTER,
+      zoom: 15,
+    });
+    maplibreGL({
+      style: 'https://tiles.openfreemap.org/styles/bright',
+    }).addTo(pickerMap);
+    pickerMap.on('click', function (e) {
+      placePin(e.latlng.lat, e.latlng.lng);
+    });
+  }
+
+  // Initialise (or resize) the map every time the modal becomes visible
+  modalEl.addEventListener('shown.bs.modal', function () {
+    initPickerMap();
+    pickerMap.invalidateSize();
+
+    // If editing, pre-place the pin at the saved coordinates
+    const lat = parseFloat(latInput.value);
+    const lng = parseFloat(lngInput.value);
+    if (isFinite(lat) && isFinite(lng)) {
+      placePin(lat, lng);
+      pickerMap.setView([lat, lng], 15);
+    } else {
+      coordsLabel.textContent = 'No location pinned yet. Click the map to place a pin.';
+      if (pickerMarker) {
+        pickerMap.removeLayer(pickerMarker);
+        pickerMarker = null;
+      }
+      pickerMap.setView(GALICIA_CENTER, 15);
+    }
+  });
+})();
+// ────────────────────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', function () {
+  const mapElement = document.getElementById('evacuationMap');
+  const mapErrorEl = document.getElementById('evacuationMapError');
+
+  function showMapError(message) {
+    console.error('Evacuation map:', message);
+    if (mapErrorEl) {
+      mapErrorEl.classList.remove('d-none');
+      mapErrorEl.textContent = message;
+    }
+  }
+
+  if (!mapElement) {
+    showMapError('Map container was not found on the page.');
+    return;
+  }
+  // Leaflet always expects [latitude, longitude] order
+  const GALICIA_CENTER = [9.9827, 122.7193];
+  const DEFAULT_ZOOM = 15;
+
+  function isValidLatitude(value) {
+    return typeof value === 'number' && isFinite(value) && value >= -90 && value <= 90;
+  }
+
+  function isValidLongitude(value) {
+    return typeof value === 'number' && isFinite(value) && value >= -180 && value <= 180;
+  }
+
+  function isValidLatLng(lat, lng) {
+    return isValidLatitude(lat) && isValidLongitude(lng);
+  }
+
+  const evacuationMap = L.map('evacuationMap', {
+    center: GALICIA_CENTER,
+    zoom: DEFAULT_ZOOM,
+    scrollWheelZoom: true,
+  });
+
+  // Default view on page load: Galicia area
+  evacuationMap.setView(GALICIA_CENTER, DEFAULT_ZOOM);
+
+  /* Disabled Esri basemap: its tile server was returning unavailable tiles.
+  const baseLayer = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    {
+      maxZoom: 19,
+      attribution: 'Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri, TomTom'
+    }
+  ).addTo(evacuationMap);
+
+  evacuationMap.on('tileerror', function () {
+    showMapError('Map tiles could not be loaded from the map provider. Please check your internet connection and refresh the page.');
+  });
+
+  */
+
+  // Free, no-key vector basemap. MapLibre renders it inside the existing
+  // Leaflet map, keeping the evacuation markers and routing intact.
+  const baseLayer = maplibreGL({
+    // Bright uses light streets, blue water, and green land similar to the
+    // reference map without using Google Maps or an API key.
+    style: 'https://tiles.openfreemap.org/styles/bright',
+  }).addTo(evacuationMap);
+
+  evacuationMap.invalidateSize();
+
+  function createEvacuationIcon(fillColor) {
+    return L.divIcon({
+      className: 'evacuation-center-marker',
+      html: '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="42" viewBox="0 0 30 42"><path d="M15 0C6.7 0 0 6.7 0 15c0 11.2 15 27 15 27s15-15.8 15-27C30 6.7 23.3 0 15 0z" fill="' + fillColor + '" stroke="#ffffff" stroke-width="2"/><circle cx="15" cy="14" r="6" fill="#ffffff"/></svg>',
+      iconSize: [30, 42],
+      iconAnchor: [15, 42],
+      popupAnchor: [0, -42],
+    });
+  }
+
+  const evacuationIcon = createEvacuationIcon('#198754');  // Green for available evacuation centers
+  const fullIcon = createEvacuationIcon('#dc3545');        // Red for full or closed centers
+  const hazardIcon = createEvacuationIcon('#dc3545');      // Red for hazard zones
+  const floodIcon = createEvacuationIcon('#f97316');       // Orange for flood-prone areas
+  const userLocationIcon = createEvacuationIcon('#2563eb'); // Blue for the user's own location
+
+  // Pick a center icon based on its current status.
+  function iconForStatus(status) {
+    return status === 'available' ? evacuationIcon : fullIcon;
+  }
+
+  function buildPopupContent(center) {
+    const statusLabel = {
+      available: '<span class="badge bg-success-lt text-success">Available</span>',
+      full: '<span class="badge bg-warning-lt text-warning">Full</span>',
+      closed: '<span class="badge bg-danger-lt text-danger">Closed</span>',
+    }[center.status] || '';
+    const available = Math.max(0, center.capacity - center.current_occupancy);
+    const lines = [
+      '<strong>' + center.name + '</strong> ' + statusLabel,
+      'Capacity: ' + center.current_occupancy + ' / ' + center.capacity +
+        ' (' + available + ' slot' + (available === 1 ? '' : 's') + ' open)',
+    ];
+    if (center.supplies) {
+      lines.push('<em>Supplies:</em> ' + center.supplies);
+    }
+    if (center.evacuees_url) {
+      lines.push('<a class="btn btn-sm btn-primary mt-2" href="' + center.evacuees_url + '">View Evacuees</a>');
+    }
+    return lines.join('<br>');
+  }
+
+  function buildHazardPopupContent(hazardZone) {
+    const lines = [
+      '<strong>' + hazardZone.name + '</strong> <span class="badge bg-danger-lt text-danger">Hazard Zone</span>',
+    ];
+    if (hazardZone.description) {
+      lines.push(hazardZone.description);
+    }
+    lines.push('Routes are planned to avoid this zone where possible.');
+    return lines.join('<br>');
+  }
+
+  function buildFloodPopupContent(floodArea) {
+    const lines = [
+      '<strong>' + floodArea.name + '</strong> <span class="badge bg-warning-lt text-warning">Flood-Prone</span>',
+    ];
+    if (floodArea.description) {
+      lines.push(floodArea.description);
+    }
+    lines.push('Routes are planned to avoid this area where possible.');
+    return lines.join('<br>');
+  }
+
+  const evacuationCentersLayer = L.layerGroup();
+  const hazardZonesLayer = L.layerGroup();
+  const floodProneAreasLayer = L.layerGroup();
+
+  evacuationMap.addLayer(evacuationCentersLayer);
+  evacuationMap.addLayer(hazardZonesLayer);
+  evacuationMap.addLayer(floodProneAreasLayer);
+
+  let skippedInvalidLocations = 0;
+  const skippedInvalidLocationNames = [];
+
+  function addMarkerIfValid(layer, lat, lng, icon, popupBuilder, popupData) {
+    if (!isValidLatLng(lat, lng)) {
+      skippedInvalidLocations += 1;
+      if (popupData && popupData.name) {
+        skippedInvalidLocationNames.push(popupData.name);
+      }
+      console.error(
+        'Skipping marker with invalid coordinates (latitude must be -90..90, longitude -180..180):',
+        popupData && popupData.name,
+        { latitude: lat, longitude: lng }
+      );
+      return;
+    }
+    // Leaflet requires [latitude, longitude] order
+    layer.addLayer(L.marker([lat, lng], { icon: icon }).bindPopup(popupBuilder(popupData)));
+  }
+
+  {% for center in centers %}
+    addMarkerIfValid(evacuationCentersLayer, {{ center.latitude|default_if_none:"null" }}, {{ center.longitude|default_if_none:"null" }}, iconForStatus('{{ center.status }}'), buildPopupContent, {
+      name: '{{ center.name|escapejs }}',
+      current_occupancy: {{ center.current_occupancy }},
+      capacity: {{ center.capacity }},
+      status: '{{ center.status|escapejs }}',
+      supplies: '{{ center.supplies|escapejs }}',
+      evacuees_url: '{% url "evacuation:public_evacuee_list" center.id %}',
+    });
+  {% endfor %}
+
+  {% for hazard_zone in hazard_zones %}
+    addMarkerIfValid(hazardZonesLayer, {{ hazard_zone.latitude|default_if_none:"null" }}, {{ hazard_zone.longitude|default_if_none:"null" }}, hazardIcon, buildHazardPopupContent, {
+      name: '{{ hazard_zone.name|escapejs }}',
+      description: '{{ hazard_zone.description|escapejs }}',
+    });
+  {% endfor %}
+
+  {% for flood_area in flood_prone_areas %}
+    addMarkerIfValid(floodProneAreasLayer, {{ flood_area.latitude|default_if_none:"null" }}, {{ flood_area.longitude|default_if_none:"null" }}, floodIcon, buildFloodPopupContent, {
+      name: '{{ flood_area.name|escapejs }}',
+      description: '{{ flood_area.description|escapejs }}',
+    });
+  {% endfor %}
+
+  if (skippedInvalidLocations > 0) {
+    const names = skippedInvalidLocationNames.length
+      ? ': ' + skippedInvalidLocationNames.join(', ')
+      : '';
+    showMapError(skippedInvalidLocations + ' location(s) were not plotted because their coordinates are missing or invalid' + names + '. Latitude must be between -90 and 90 and longitude between -180 and 180.');
+  }
+
+  /* Alert-style hazard vector layers.
+     The Django models store hazard/flood zones as single points, so each zone
+     is rendered as a red/orange alert circle around its center. These areas
+     are also registered in `hazardAvoidAreas`, which the routing logic uses
+     to steer routes clear of active flood and hazard zones. */
+  const HAZARD_DETECTION_RADIUS_M = 300;
+  const hazardAvoidAreas = [];
+
+  function registerAvoidArea(lat, lng) {
+    hazardAvoidAreas.push({ lat: lat, lng: lng, radius: HAZARD_DETECTION_RADIUS_M });
+  }
+
+  {% for hazard_zone in hazard_zones %}
+    {% if hazard_zone.latitude and hazard_zone.longitude %}
+    hazardZonesLayer.addLayer(L.circle([{{ hazard_zone.latitude }}, {{ hazard_zone.longitude }}], {
+      radius: HAZARD_DETECTION_RADIUS_M,
+      color: '#dc3545',
+      weight: 2,
+      fillColor: '#dc3545',
+      fillOpacity: 0.25,
+      dashArray: '6 4',
+    }));
+    registerAvoidArea({{ hazard_zone.latitude }}, {{ hazard_zone.longitude }});
+    {% endif %}
+  {% endfor %}
+
+  {% for flood_area in flood_prone_areas %}
+    {% if flood_area.latitude and flood_area.longitude %}
+    floodProneAreasLayer.addLayer(L.circle([{{ flood_area.latitude }}, {{ flood_area.longitude }}], {
+      radius: HAZARD_DETECTION_RADIUS_M,
+      color: '#f97316',
+      weight: 2,
+      fillColor: '#f97316',
+      fillOpacity: 0.2,
+      dashArray: '6 4',
+    }));
+    registerAvoidArea({{ flood_area.latitude }}, {{ flood_area.longitude }});
+    {% endif %}
+  {% endfor %}
+
+  // Approximate distance between two [lat, lng] points, in meters (haversine).
+  function distanceMeters(lat1, lng1, lat2, lng2) {
+    const toRad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * toRad;
+    const dLng = (lng2 - lng1) * toRad;
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLng / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  // True when any part of the route geometry passes inside a hazard area.
+  function routeIntersectsHazards(routeCoordsPairArray) {
+    for (const area of hazardAvoidAreas) {
+      for (const [lng, lat] of routeCoordsPairArray) {
+        if (distanceMeters(lat, lng, area.lat, area.lng) <= area.radius) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Keep the initial view focused on Galicia until the user plans a route.
+  L.control.layers({}, {
+    'Evacuation Centers': evacuationCentersLayer,
+    'Hazard Zones': hazardZonesLayer,
+    'Flood-Prone Areas': floodProneAreasLayer,
+  }, { collapsed: false }).addTo(evacuationMap);
+
+  // Keep Leaflet sized correctly when the window resizes
+  window.addEventListener('resize', function() {
+    evacuationMap.invalidateSize();
+  });
+
+  const evacuationRouteSummaryEl = document.getElementById('evacuationRouteSummary');
+  const evacuationRouteDistanceEl = document.getElementById('evacuationRouteDistance');
+  const evacuationRouteDurationEl = document.getElementById('evacuationRouteDuration');
+  const evacuationRouteErrorEl = document.getElementById('evacuationRouteError');
+  const evacuationRouteNearestEl = document.getElementById('evacuationRouteNearest');
+
+  // Brief on-screen toast notification (matches the page's toast styling).
+  function showToast(message, variant) {
+    const container = document.getElementById('evacuationToastContainer');
+    if (!container) { return; }
+    const toastEl = document.createElement('div');
+    toastEl.className = 'toast bg-success-lt ' + (variant || '');
+    toastEl.setAttribute('role', 'status');
+    toastEl.setAttribute('aria-atomic', 'true');
+    toastEl.setAttribute('data-bs-delay', '5000');
+    toastEl.innerHTML =
+      '<div class="d-flex">' +
+      '<div class="toast-body">' +
+      '<i class="ti ti-user-check me-1"></i> ' + message +
+      '</div>' +
+      '<button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>' +
+      '</div>';
+    container.appendChild(toastEl);
+    bootstrap.Toast.getOrCreateInstance(toastEl).show();
+  }
+
+  // Straight-line distance to a destination option, kept for proximity checks.
+  function haversineKm(lat1, lng1, lat2, lng2) {
+    const toRad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * toRad;
+    const dLng = (lng2 - lng1) * toRad;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * 6371000 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) / 1000;
+  }
+
+  // Find the nearest accessible (status "available") evacuation center option
+  // in the destination dropdown relative to the user's coordinates.
+  function findNearestCenter(userLatLng) {
+    const select = document.getElementById('evacuationDestinationSelect');
+    if (!select) { return null; }
+    let nearest = null;
+    for (const option of select.options) {
+      if (!option.value) { continue; }  // Skip the placeholder
+      // Only consider accessible centers; full/closed centers are skipped.
+      if (option.getAttribute('data-status') && option.getAttribute('data-status') !== 'available') {
+        continue;
+      }
+      const latNum = parseFloat(option.getAttribute('data-latitude'));
+      const lngNum = parseFloat(option.getAttribute('data-longitude'));
+      if (!isValidLatLng(latNum, lngNum)) { continue; }
+      const distance = haversineKm(userLatLng.lat, userLatLng.lng, latNum, lngNum);
+      if (!nearest || distance < nearest.distance) {
+        nearest = {
+          option: option,
+          latlng: L.latLng(latNum, lngNum),
+          distance: distance,
+          name: option.textContent.trim(),
+        };
+      }
+    }
+    return nearest;
+  }
+
+  let routeStart = null;
+  let routeDestination = null;
+  let routeLayer = null;
+  let evacuationRouteDetails = null;
+  let evacuationStartMarker = null;
+  let evacuationAccuracyCircle = null;
+  let evacuationDestinationMarker = null;
+
+  function clearSafeRoute() {
+    if (routeLayer) {
+      evacuationMap.removeLayer(routeLayer);
+      routeLayer = null;
+    }
+    if (evacuationDestinationMarker) {
+      evacuationMap.removeLayer(evacuationDestinationMarker);
+      evacuationDestinationMarker = null;
+    }
+    if (evacuationStartMarker) {
+      evacuationMap.removeLayer(evacuationStartMarker);
+      evacuationStartMarker = null;
+    }
+    evacuationRouteDetails = null;
+    evacuationRouteSummaryEl.classList.add('d-none');
+    evacuationRouteDistanceEl.textContent = '';
+    evacuationRouteDurationEl.textContent = '';
+    if (evacuationRouteNearestEl) {
+      evacuationRouteNearestEl.classList.add('d-none');
+    }
+    evacuationRouteErrorEl.classList.add('d-none');
+    evacuationRouteErrorEl.textContent = '';
+  }
+
+  function formatSafeRouteSummary() {
+    if (!evacuationRouteDetails) { return; }
+    const distanceKm = (evacuationRouteDetails.distance / 1000).toFixed(1);
+    const durationMin = Math.max(1, Math.round(evacuationRouteDetails.duration / 60));
+    evacuationRouteDistanceEl.textContent = distanceKm + ' km';
+    evacuationRouteDurationEl.textContent = '~ ' + durationMin + ' min travel time';
+    evacuationRouteErrorEl.classList.add('d-none');
+    evacuationRouteErrorEl.textContent = '';
+    evacuationRouteSummaryEl.classList.remove('d-none');
+  }
+
+  function showRouteError(message) {
+    evacuationRouteDetails = null;
+    evacuationRouteSummaryEl.classList.add('d-none');
+    evacuationRouteDistanceEl.textContent = '';
+    evacuationRouteDurationEl.textContent = '';
+    if (evacuationRouteNearestEl) {
+      evacuationRouteNearestEl.classList.add('d-none');
+    }
+    evacuationRouteErrorEl.textContent = message;
+    evacuationRouteErrorEl.classList.remove('d-none');
+    console.error('Route planning error:', message);
+  }
+
+  function setStartFromLatLng(latlng) {
+    if (!latlng || !isValidLatLng(latlng.lat, latlng.lng)) {
+      showRouteError('The start location is invalid. Latitude must be between -90 and 90 and longitude between -180 and 180.');
+      return false;
+    }
+    routeStart = latlng;
+    if (evacuationStartMarker) {
+      evacuationMap.removeLayer(evacuationStartMarker);
+    }
+    // Remove the accuracy circle from a previous geolocation fix
+    if (evacuationAccuracyCircle) {
+      evacuationMap.removeLayer(evacuationAccuracyCircle);
+      evacuationAccuracyCircle = null;
+    }
+    // User's location gets a distinct marker so it is not confused with
+    // the green evacuation center pins.
+    evacuationStartMarker = L.marker([latlng.lat, latlng.lng], { icon: userLocationIcon })
+      .addTo(evacuationMap)
+      .bindPopup('<strong>You are here</strong>');
+    return true;
+  }
+
+  function getSelectedDestination() {
+    const select = document.getElementById('evacuationDestinationSelect');
+    const selectedOption = select && select.selectedOptions ? select.selectedOptions[0] : null;
+    if (!selectedOption || !selectedOption.value) { return null; }
+    const latAttr = selectedOption.getAttribute('data-latitude');
+    const lngAttr = selectedOption.getAttribute('data-longitude');
+    // Skip if coordinates are completely missing
+    if (!latAttr || !lngAttr) { return null; }
+    // Allow numeric values or numbers stored as strings; treat "None"/empty as null
+    const latNum = parseFloat(latAttr);
+    const lngNum = parseFloat(lngAttr);
+    // Enforce valid ranges: latitude -90..90, longitude -180..180
+    if (!isValidLatLng(latNum, lngNum)) { return null; }
+    return L.latLng(latNum, lngNum);
+  }
+
+  function planSafeRoute(startLatLng, endLatLng) {
+    if (!startLatLng || !endLatLng) {
+      showRouteError('A start location and a selected evacuation center are both required to plan a route.');
+      return;
+    }
+    if (!isValidLatLng(startLatLng.lat, startLatLng.lng) || !isValidLatLng(endLatLng.lat, endLatLng.lng)) {
+      showRouteError('Cannot plan a route: the start or destination coordinates are invalid. Latitude must be between -90 and 90 and longitude between -180 and 180.');
+      return;
+    }
+
+    clearSafeRoute();
+    routeStart = startLatLng;
+    routeDestination = endLatLng;
+
+    // Keep the start marker visible while planning
+    if (!setStartFromLatLng(startLatLng)) { return; }
+
+    // Add destination marker if not already present
+    if (!evacuationDestinationMarker) {
+      evacuationDestinationMarker = L.marker([endLatLng.lat, endLatLng.lng]).addTo(evacuationMap);
+    } else {
+      evacuationDestinationMarker.setLatLng([endLatLng.lat, endLatLng.lng]);
+    }
+    evacuationDestinationMarker.bindPopup('<strong>Destination</strong>').openPopup();
+
+    // OSRM requires longitude,latitude text order (Leaflet markers use [lat, lng]).
+    // alternatives=3 lets the router offer multiple routes so we can pick one
+    // that steers clear of active flood and hazard zones.
+    const start = { lat: startLatLng.lat, lng: startLatLng.lng };
+    const destination = { lat: endLatLng.lat, lng: endLatLng.lng };
+    const url = `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${destination.lng},${destination.lat}?overview=full&geometries=geojson&alternatives=3`;
+
+    // Disable button while routing
+    const planBtn = document.getElementById('evacuationPlanRouteBtn');
+    const originalBtnText = planBtn.textContent;
+    planBtn.disabled = true;
+    planBtn.textContent = 'Routing...';
+
+    fetch(url)
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error('Routing service returned HTTP ' + response.status + '.');
+        }
+        return response.json();
+      })
+      .then(function (data) {
+        const routes = data && data.routes;
+        if (!routes || !routes.length || !routes[0].geometry) {
+          showRouteError('No road route was found between your location and the selected evacuation center. Please try again or choose another center.');
+          return;
+        }
+
+        // Prefer a route that avoids all hazard/flood areas; otherwise fall
+        // back to the shortest route found.
+        let route = null;
+        let avoidingHazards = false;
+        for (const candidate of routes) {
+          if (candidate.geometry && !routeIntersectsHazards(candidate.geometry.coordinates)) {
+            route = candidate;
+            avoidingHazards = true;
+            break;
+          }
+        }
+        if (!route) {
+          route = routes[0];
+        }
+
+        // Remove any previous route before drawing the new one
+        if (routeLayer) {
+          evacuationMap.removeLayer(routeLayer);
+          routeLayer = null;
+        }
+
+        routeLayer = L.geoJSON(route.geometry, {
+          style: { color: '#4f46e5', weight: 6, opacity: 0.9 }
+        }).addTo(evacuationMap);
+
+        // Animate directly to the complete route as soon as it is drawn.
+        evacuationMap.flyToBounds(routeLayer.getBounds(), {
+          padding: [40, 40],
+          maxZoom: 17,
+          duration: 1,
+        });
+
+        evacuationRouteDetails = { distance: route.distance, duration: route.duration };
+        formatSafeRouteSummary();
+        if (!avoidingHazards) {
+          evacuationRouteDurationEl.textContent += ' — none of the available routes could avoid active flood/hazard zones; follow this route with caution.';
+        }
+      })
+      .catch(function (error) {
+        showRouteError('Could not get a road route from OSRM. Check your internet connection and try again.');
+        console.error('OSRM request failed:', error);
+      })
+      .finally(function () {
+        planBtn.disabled = false;
+        planBtn.textContent = originalBtnText;
+      });
+  }
+
+  document.getElementById('evacuationPlanRouteBtn').addEventListener('click', function () {
+    const select = document.getElementById('evacuationDestinationSelect');
+    const selectedOption = select && select.selectedOptions ? select.selectedOptions[0] : null;
+    if (!routeStart) {
+      showRouteError('Set a start location first: click "Use my location" or click anywhere on the map.');
+      return;
+    }
+    if (!isValidLatLng(routeStart.lat, routeStart.lng)) {
+      showRouteError('The start location is invalid. Latitude must be between -90 and 90 and longitude between -180 and 180.');
+      return;
+    }
+    if (!selectedOption || !selectedOption.value) {
+      showRouteError('Please select an evacuation center as the destination.');
+      return;
+    }
+    const destination = getSelectedDestination();
+    if (!destination) {
+      showRouteError('The selected evacuation center has invalid or missing coordinates. Latitude must be between -90 and 90 and longitude between -180 and 180. Edit the center and try again.');
+      return;
+    }
+    const destStatus = selectedOption.getAttribute('data-status');
+    if (destStatus === 'full' || destStatus === 'closed') {
+      showRouteError('The selected evacuation center is currently marked as "' + destStatus + '". Please choose an available center before planning a route.');
+      return;
+    }
+    planSafeRoute(routeStart, destination);
+  });
+
+  document.getElementById('evacuationUseLocationBtn').addEventListener('click', function () {
+    if (!navigator.geolocation) {
+      showRouteError('Your browser does not support geolocation. Please pick a start point by clicking on the map instead.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      function (position) {
+        const start = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+
+        if (!isValidLatLng(start.lat, start.lng)) {
+          showRouteError('Your browser returned invalid location coordinates. Please try again or click on the map to set a start point.');
+          return;
+        }
+
+        const latlng = L.latLng(start.lat, start.lng);
+        if (setStartFromLatLng(latlng)) {
+          // Automatic proximity calculation: find the nearest accessible
+          // evacuation center relative to these coordinates...
+          const nearest = findNearestCenter(latlng);
+          if (nearest) {
+            // ...auto-select it in the dropdown...
+            const select = document.getElementById('evacuationDestinationSelect');
+            select.value = nearest.option.value;
+
+            // ...plan the route automatically, and announce it.
+            planSafeRoute(latlng, nearest.latlng);
+            if (evacuationRouteNearestEl) {
+              evacuationRouteNearestEl.innerHTML =
+                '<i class="ti ti-user-check me-1"></i> Nearest Evacuation Center: <strong>' +
+                nearest.name + '</strong> — ' + nearest.distance.toFixed(1) + ' km away';
+            }
+            showToast('Nearest Evacuation Center found: ' + nearest.name);
+          } else {
+            const select = document.getElementById('evacuationDestinationSelect');
+            select.value = '';
+            showRouteError('No accessible evacuation center could be found near your location. All centers are currently full or closed, or have incomplete coordinates. Please select a destination manually.');
+          }
+        }
+        // Show GPS accuracy as a circle around the user's location
+        const accuracy = position.coords.accuracy;
+        if (accuracy && isFinite(accuracy)) {
+          if (evacuationAccuracyCircle) {
+            evacuationMap.removeLayer(evacuationAccuracyCircle);
+          }
+          evacuationAccuracyCircle = L.circle([latlng.lat, latlng.lng], {
+            radius: Math.min(accuracy, 500),
+            color: '#2563eb',
+            weight: 1,
+            fillColor: '#2563eb',
+            fillOpacity: 0.1,
+          }).addTo(evacuationMap);
+        }
+      },
+      function (error) {
+        let message = 'Unable to retrieve your location. Please try again or click on the map to set a start point.';
+        if (error && error.code === 1) {
+          message = 'Location access was denied. Allow location access for this site in your browser settings, or click on the map to set a start point.';
+        } else if (error && error.code === 2) {
+          message = 'Your current location is unavailable. Check your connection or click on the map to set a start point.';
+        } else if (error && error.code === 3) {
+          message = 'Getting your location timed out. Please try again or click on the map to set a start point.';
+        }
+        showRouteError(message);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  });
+
+  evacuationMap.on('click', function (event) {
+    setStartFromLatLng(event.latlng);
+  });
+});
+</script>
+{% endblock %}

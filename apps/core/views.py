@@ -2,13 +2,22 @@ from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth import authenticate, get_user_model, login, logout
-from django.contrib.auth.decorators import login_required
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
+from apps.core.decorators import staff_required
+from apps.evacuation.views import evacuation_list_page
+import json
+
+from apps.scoping import (
+    scoped_evacuation_centers,
+    scoped_flood_prone_areas,
+    scoped_hazard_zones,
+    scoped_infos,
+)
 
 User = get_user_model()
 
@@ -16,6 +25,14 @@ MAX_FAILED_ATTEMPTS = 5
 LOCK_DURATION = timedelta(minutes=1)
 INVALID_LOGIN_MESSAGE = 'Invalid username or password.'
 LOCKED_MESSAGE = 'Too many failed attempts. Locked for 1 minute.'
+
+
+def service_worker(request):
+    """Serve the service worker at the site root so it can control all pages."""
+    response = render(request, 'service-worker.js', content_type='application/javascript')
+    response['Service-Worker-Allowed'] = '/'
+    response['Cache-Control'] = 'no-cache'
+    return response
 
 
 def _reset_lock_state(request):
@@ -100,9 +117,22 @@ def _validate_registration_data(data):
 
 
 @require_http_methods(['GET', 'POST'])
+def home(request):
+    """Public site entry point.
+
+    The main site URL always renders the public live evacuation map and center
+    list, for every visitor -- anonymous citizens and logged-in staff creators
+    alike. Monitoring views stay available at ``/dashboard/`` for staff.
+    """
+    return evacuation_list_page(request)
+
+
+@require_http_methods(['GET', 'POST'])
 def login_view(request):
     if request.user.is_authenticated:
-        return redirect('dashboard')
+        # Staff/creators continue to the monitoring dashboard; regular
+        # authenticated users (evacuees) are sent to the public map.
+        return redirect('dashboard' if request.user.is_staff else 'evacuation:evacuation_list')
 
     failed_attempts, remaining = _get_lock_state(request)
     if remaining is not None:
@@ -119,7 +149,7 @@ def login_view(request):
     if user is not None:
         _reset_lock_state(request)
         login(request, user)
-        return redirect('dashboard')
+        return redirect('dashboard' if user.is_staff else 'evacuation:evacuation_list')
 
     failed_attempts += 1
     request.session['failed_attempts'] = failed_attempts
@@ -138,15 +168,81 @@ def logout_view(request):
     return redirect('login')
 
 
-@login_required(login_url='login')
-def home(request):
-    return render(request, 'home.html')
+@staff_required
+def dashboard(request):
+    """Render the SafeZone overview with KPIs, charts, quick actions and activity."""
+    from django.db.models import Sum
+
+    user = request.user
+    centers = scoped_evacuation_centers(user)
+    infos = scoped_infos(user)
+
+    active_centers = centers.filter(is_active=True, status='available')
+    occupancy_totals = active_centers.aggregate(
+        sheltered=Sum('current_occupancy'),
+        capacity=Sum('capacity'),
+    )
+
+    occupied_list = list(
+        centers.order_by('name').values('id', 'name', 'current_occupancy', 'capacity', 'status')
+    )
+    occupancy_data = [
+        {
+            'name': c['name'],
+            'occupied': c['current_occupancy'],
+            'remaining': max(0, c['capacity'] - c['current_occupancy']),
+            'full': c['status'] != 'available' or c['current_occupancy'] >= c['capacity'],
+        }
+        for c in occupied_list
+    ]
+
+    info_values = list(infos.values('id', 'name', 'age', 'pwd', 'created_at'))
+    children = sum(1 for p in info_values if p['age'] <= 12)
+    adults = sum(1 for p in info_values if 13 <= p['age'] <= 59)
+    seniors = sum(1 for p in info_values if p['age'] >= 60)
+    pwds = sum(1 for p in info_values if p['pwd'])
+
+    hazard_zones_count = scoped_hazard_zones(user).count()
+    flood_areas_count = scoped_flood_prone_areas(user).count()
+
+    return render(request, 'dashboard.html', {
+        'active_centers': active_centers.count(),
+        # Evacuees sheltered = total registered evacuee individuals.
+        'total_sheltered': infos.count(),
+        'total_capacity': occupancy_totals['capacity'] or 0,
+        'high_risk_zones': hazard_zones_count + flood_areas_count,
+        'occupancy_data': occupancy_data,
+        'occupancy_json': json.dumps(occupancy_data),
+        'demographics': {
+            'children': children,
+            'adults': adults,
+            'seniors': seniors,
+            'pwds': pwds,
+        },
+        'demographics_json': json.dumps({
+            'children': children,
+            'adults': adults,
+            'seniors': seniors,
+            'pwds': pwds,
+        }),
+        'activities': [
+            {
+                'id': p['id'],
+                'name': p['name'],
+                'age': p['age'],
+                'created_at': p['created_at'],
+            }
+            for p in infos.order_by('-created_at').values('id', 'name', 'age', 'created_at')[:8]
+        ],
+    })
 
 
 @require_http_methods(['GET', 'POST'])
 def register_view(request):
     if request.user.is_authenticated:
-        return redirect('dashboard')
+        # Staff/creators continue to the monitoring dashboard; regular
+        # authenticated users (evacuees) are sent to the public map.
+        return redirect('dashboard' if request.user.is_staff else 'evacuation:evacuation_list')
 
     if request.method == 'GET':
         return render(request, 'auth/register.html')
@@ -172,4 +268,5 @@ def register_view(request):
         password=form_data['password'],
     )
     login(request, user)
-    return redirect('dashboard')
+    # New evacuees land on the public map; they are not system creators.
+    return redirect('evacuation:evacuation_list')

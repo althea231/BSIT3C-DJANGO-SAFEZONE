@@ -4,6 +4,13 @@ from . import views
 app_name = 'users'
 
 urlpatterns = [
+    # ─────────────────────────────────────────────────────────────────────────
+    # USER MANAGEMENT ENDPOINTS (CREATOR / ADMIN ONLY)
+    #
+    # Monitoring user accounts and granting/revoking staff (creator) roles is
+    # strictly reserved for authorized administrators. Every endpoint here is
+    # protected by `@staff_required` (login + staff validation, 403 otherwise).
+    # ─────────────────────────────────────────────────────────────────────────
     # Page
     path('', views.user_list_page, name='user_list'),
     # AJAX

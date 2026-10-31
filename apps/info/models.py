@@ -10,6 +10,16 @@ class Info(models.Model):
     age = models.PositiveIntegerField(validators=[MinValueValidator(1), MaxValueValidator(150)])
     address = models.CharField(max_length=255)
     email = models.EmailField(max_length=255, blank=True)
+    pwd = models.BooleanField(default=False)
+    family_head = models.CharField(max_length=255, blank=True)
+    evacuation_center = models.ForeignKey(
+        'evacuation.EvacuationCenter',
+        related_name='evacuees',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text='Evacuation center this person is checked in to.',
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name='infos',

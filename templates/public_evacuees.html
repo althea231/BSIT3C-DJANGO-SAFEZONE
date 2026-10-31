@@ -1,0 +1,195 @@
+{% extends "theme/base.html" %}
+{% block content %}
+<div class="container-xl">
+  <div class="page-header d-print-none" aria-label="Page header">
+    <div class="container-xl">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="page-pretitle">Evacuation Center</div>
+          <div class="d-flex align-items-center gap-3 flex-wrap">
+            <h2 class="page-title mb-0">{{ center.name }}</h2>
+            {% if center.status == "available" %}
+              <span class="badge bg-success-lt text-success">Available</span>
+            {% elif center.status == "full" %}
+              <span class="badge bg-warning-lt text-warning">Full</span>
+            {% else %}
+              <span class="badge bg-danger-lt text-danger">Closed</span>
+            {% endif %}
+          </div>
+          <div class="text-secondary">Safe check-in registry for this evacuation center.</div>
+        </div>
+        <div class="col-auto">
+          <div class="text-secondary">
+            <i class="ti ti-users me-1"></i> {{ center.current_occupancy }} of {{ center.capacity }} checked in
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <br>
+
+  <div class="card">
+    <div class="card-header d-flex align-items-center justify-content-between gap-2">
+      <div class="card-title">
+        <i class="ti ti-user-check me-1"></i> Checked-In Evacuees
+        {% if query %}
+          <span class="text-secondary fw-normal">— search results for &ldquo;{{ query }}&rdquo;</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card-body">
+      <form method="get" action="" id="publicEvacueesSearchForm">
+        <div class="input-group input-group-lg" style="max-width: 640px;">
+          <span class="input-group-text"><i class="ti ti-search"></i></span>
+          <input type="text" name="q" id="publicEvacueeSearchInput" value="{{ query }}" class="form-control" placeholder="Search evacuees by name..." aria-label="Search evacuees by name" />
+          <select name="center" id="publicEvacueeCenterFilter" class="form-select" style="max-width: 260px;" aria-label="Filter by evacuation center">
+            <option value="">All evacuation centers</option>
+            {% for c in centers %}
+            <option value="{{ c.id }}"{% if c.id == center.id %} selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+          {% if query %}
+            <a href="{% url 'evacuation:public_evacuee_list' center.id %}" class="btn btn-outline-secondary">Clear</a>
+          {% endif %}
+          <button type="submit" class="btn btn-primary">Search</button>
+        </div>
+      </form>
+
+      <div class="table-responsive">
+        <table class="table table-vcenter card-table text-nowrap" id="public-evacuees-table">
+          <thead>
+            <tr>
+              <th scope="col" class="text-secondary">#</th>
+              <th scope="col">Name</th>
+              <th scope="col" class="text-secondary">Check-In Time</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody id="publicEvacueesTableBody">
+            {% for evacuee in evacuees %}
+            <tr>
+              <td class="text-secondary">{{ forloop.counter }}</td>
+              <td class="fw-semibold">{{ evacuee.name }}</td>
+              <td class="text-secondary">{{ evacuee.check_in|date:"M j, Y g:i A" }}</td>
+              <td>
+                <span class="badge bg-success-lt text-success">{{ evacuee.status }}</span>
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="4" class="text-center text-secondary py-5">
+                <div class="empty">
+                  <div class="empty-icon">
+                    <i class="fas fa-user-slash fa-2x"></i>
+                  </div>
+                  <p class="empty-title">No evacuees found</p>
+                  <p class="empty-subtitle">No evacuees have checked in yet or no matches for your search.</p>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    const searchInput = document.getElementById('publicEvacueeSearchInput');
+    const centerFilter = document.getElementById('publicEvacueeCenterFilter');
+    const tableBody = document.getElementById('publicEvacueesTableBody');
+
+    function escapeHtml(value) {
+      return String(value === null || value === undefined ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatCheckIn(value) {
+      if (!value) { return '—'; }
+      const date = new Date(value);
+      if (isNaN(date.getTime())) { return value; }
+      const pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+        ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+    }
+
+    function buildRow(index, evacuee) {
+      const centerSuffix = evacuee.center
+        ? '<span class="text-secondary fw-normal">(' + escapeHtml(evacuee.center) + ')</span>'
+        : '';
+      return ''
+        + '<tr>'
+        + '  <td class="text-secondary">' + index + '</td>'
+        + '  <td class="fw-semibold">' + escapeHtml(evacuee.name) + centerSuffix + '</td>'
+        + '  <td class="text-secondary">' + escapeHtml(formatCheckIn(evacuee.check_in)) + '</td>'
+        + '  <td><span class="badge bg-success-lt text-success">' + escapeHtml(evacuee.status) + '</span></td>'
+        + '</tr>';
+    }
+
+    function renderRows(rows) {
+      const results = rows || [];
+      let html = '';
+      if (!results.length) {
+        html = ''
+          + '<tr>'
+          + '  <td colspan="4" class="text-center text-secondary py-5">'
+          + '    <div class="empty">'
+          + '      <div class="empty-icon"><i class="fas fa-user-slash fa-2x"></i></div>'
+          + '      <p class="empty-title">No evacuees found</p>'
+          + '      <p class="empty-subtitle">No evacuees have checked in yet or no matches for your search.</p>'
+          + '    </div>'
+          + '  </td>'
+          + '</tr>';
+      } else {
+        results.forEach(function (evacuee, index) {
+          html += buildRow(index + 1, evacuee) + '\n';
+        });
+      }
+      tableBody.innerHTML = html;
+    }
+
+    function loadEvacuees() {
+      const params = new URLSearchParams();
+      const q = (searchInput && searchInput.value ? searchInput.value : '').trim();
+      const centerId = (centerFilter && centerFilter.value ? centerFilter.value : '').trim();
+      if (q) { params.set('q', q); }
+      if (centerId) { params.set('center_id', centerId); }
+      const queryString = params.toString();
+      const url = '{% url "evacuation:public_evacuee_search_ajax" %}' + (queryString ? '?' + queryString : '');
+      fetch(url)
+        .then(function (response) {
+          if (!response.ok) { throw new Error('Evacuee search failed.'); }
+          return response.json();
+        })
+        .then(function (data) {
+          renderRows((data && data.results) ? data.results : []);
+        })
+        .catch(function () {
+          // On failure the server-rendered list (and the native GET form
+          // submission) remain as the fallback behaviour.
+        });
+    }
+
+    let searchTimer = null;
+    if (searchInput) {
+      searchInput.addEventListener('input', function () {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(loadEvacuees, 300);
+      });
+    }
+    if (centerFilter) {
+      centerFilter.addEventListener('change', function () {
+        loadEvacuees();
+      });
+    }
+  })();
+</script>
+{% endblock %}

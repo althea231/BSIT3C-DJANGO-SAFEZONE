@@ -608,6 +608,38 @@ html {
   letter-spacing: -0.03em;
 }
 
+/* Dashboard: charts */
+.dh-chart-canvas {
+  position: relative;
+  height: 320px;
+  width: 100%;
+}
+
+.dh-donut-canvas {
+  height: 280px;
+}
+
+/* Dashboard: quick action buttons */
+.dh-quick-actions .btn {
+  border-radius: 0.6rem;
+}
+
+/* Dashboard: activity log */
+.dh-activity-list .list-group-item {
+  border-color: var(--tblr-border-color-light, var(--tblr-border-color));
+}
+
+.dh-activity-avatar {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  font-weight: 700;
+}
+
 .stat-card .tracking-wide {
   letter-spacing: 0.07em;
 }

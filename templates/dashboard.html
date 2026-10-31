@@ -1,0 +1,233 @@
+{% extends "theme/base.html" %}
+{% block content %}
+<div class="container-xl">
+  <div class="page-header d-print-none" aria-label="Page header">
+    <div class="container-xl">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="page-pretitle">Overview</div>
+          <div class="d-flex align-items-center gap-3 flex-wrap d-none d-md-flex">
+            <h2 class="page-title mb-0">Dashboard</h2>
+          </div>
+          <h2 class="page-title mb-0 d-md-none">Dashboard</h2>
+        </div>
+      </div>
+    </div>
+  </div>
+  <br>
+
+  <!-- KPI Summary Cards -->
+  <div class="row row-deck row-cards mb-3">
+    <div class="col-sm-6 col-lg-4">
+      <div class="card dh-stat-card stat-card-primary">
+        <div class="card-body d-flex align-items-center gap-3">
+          <span class="stat-card-icon"><i class="fas fa-house-chimney"></i></span>
+          <div>
+            <span class="stat-label stat-label">Active Evacuation Centers</span>
+            <div class="h2 mb-0">{{ active_centers }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-4">
+      <div class="card dh-stat-card stat-card-success">
+        <div class="card-body d-flex align-items-center gap-3">
+          <span class="stat-card-icon"><i class="fas fa-people-roof"></i></span>
+          <div>
+            <span class="stat-label">Evacuees Sheltered</span>
+            <div class="h2 mb-0">{{ total_sheltered }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-lg-4">
+      <div class="card dh-stat-card stat-card-warning">
+        <div class="card-body d-flex align-items-center gap-3">
+          <span class="stat-card-icon"><i class="fas fa-triangle-exclamation"></i></span>
+          <div>
+            <span class="stat-label">High-Risk Hazard Zones</span>
+            <div class="h2 mb-0">{{ high_risk_zones }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="d-flex flex-wrap gap-2 mb-3">
+    {% if user.is_authenticated and user.is_staff %}
+    <a href="{% url 'info:info_list' %}" class="btn btn-outline-primary">
+      <i class="fas fa-user-plus me-2"></i> Register Evacuee
+    </a>
+    <a href="{% url 'evacuation:evacuation_list' %}" class="btn btn-outline-primary">
+      <i class="fas fa-plus-circle me-2"></i> Add Center
+    </a>
+    <a href="{% url 'evacuation:evacuation_list' %}" class="btn btn-outline-primary">
+      <i class="ti ti-map-pin me-2"></i> Open Hazard Map
+    </a>
+    {% endif %}
+  </div>
+
+  <!-- Analytics -->
+  <div class="row row-deck row-cards mb-3">
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Occupancy by Evacuation Center</div>
+        </div>
+        <div class="card-body">
+          {% if occupancy_data %}
+          <div class="dh-chart-canvas">
+            <canvas id="occupancyChart"></canvas>
+          </div>
+          {% else %}
+          <div class="empty py-5">
+            <div class="empty-icon"><i class="fas fa-chart-simple fa-2x text-muted"></i></div>
+            <p class="empty-title">No evacuation centers yet</p>
+            <p class="empty-subtitle">Add a center to see occupancy analytics here.</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Evacuee Demographics</div>
+        </div>
+        <div class="card-body">
+          {% if total_sheltered or demographics.children or demographics.adults or demographics.seniors or demographics.pwds %}
+          <div class="dh-chart-canvas dh-donut-canvas">
+            <canvas id="demographicsChart"></canvas>
+          </div>
+          {% else %}
+          <div class="empty py-5">
+            <div class="empty-icon"><i class="fas fa-chart-pie fa-2x text-muted"></i></div>
+            <p class="empty-title">No evacuee records yet</p>
+            <p class="empty-subtitle">Register an evacuee to populate demographics.</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Activity Log -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        <i class="fas fa-clock-rotate-left me-2 text-secondary"></i> Recent Check-In Activities
+      </div>
+    </div>
+    <ul class="list-group list-group-flush dh-activity-list">
+      {% for activity in activities %}
+      <li class="list-group-item d-flex align-items-center gap-3 py-2">
+        <span class="dh-activity-avatar bg-primary-lt text-primary">{{ activity.name|slice:":1"|upper }}</span>
+        <div class="min-w-0 flex-grow-1">
+          <span class="fw-medium">{{ activity.name }}</span>
+          <span class="text-muted"> (age {{ activity.age }}) checked in</span>
+        </div>
+        <span class="text-secondary ms-auto d-none d-md-inline">{{ activity.created_at|date:"M d, Y g:i A" }}</span>
+      </li>
+      {% empty %}
+      <li class="list-group-item">
+        <div class="empty py-4">
+          <p class="empty-title">No activity yet</p>
+          <p class="empty-subtitle">Registered evacuees will appear here.</p>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  // Palette matching the SafeZone stat cards (primary/green/cyan/amber).
+  const palette = ['#4f46e5', '#22c55e', '#06b6d4', '#f59e0b'];
+  // "Occupied" signals capacity pressure, so it uses red instead of the theme indigo.
+  const occupancyColor = '#ef4444';
+
+  const occupancyData = {{ occupancy_json|safe }};
+  const demographics = {{ demographics_json|safe }};
+
+  if (document.getElementById('occupancyChart')) {
+    new Chart(document.getElementById('occupancyChart'), {
+      type: 'bar',
+      data: {
+        labels: occupancyData.map(c => c.name),
+        datasets: [
+          {
+            label: 'Occupied',
+            data: occupancyData.map(c => c.occupied),
+            backgroundColor: occupancyColor,
+            borderRadius: 4,
+          },
+          {
+            label: 'Remaining Capacity',
+            data: occupancyData.map(c => c.remaining),
+            backgroundColor: '#22c55e',
+            borderRadius: 4,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { stacked: true, ticks: { autoSkip: false, maxRotation: 45, minRotation: 0 } },
+          y: { stacked: true, beginAtZero: true },
+        },
+        plugins: {
+          legend: {
+            labels: {
+              // Chart.js paints every legend label with one fontColor by default,
+              // so build the entries to tint "Occupied" red to match its bar.
+              generateLabels: (chart) => chart.data.datasets.map((dataset, i) => ({
+                text: dataset.label,
+                fillStyle: dataset.backgroundColor,
+                strokeStyle: dataset.backgroundColor,
+                fontColor: i === 0 ? occupancyColor : Chart.defaults.color,
+                lineWidth: 1,
+                hidden: !chart.isDatasetVisible(i),
+                datasetIndex: i,
+              })),
+            },
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => items[0].label,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  if (document.getElementById('demographicsChart')) {
+    new Chart(document.getElementById('demographicsChart'), {
+      type: 'doughnut',
+      data: {
+        labels: ['Children', 'Adults', 'Senior Citizens', 'PWD'],
+        datasets: [{
+          data: [demographics.children, demographics.adults, demographics.seniors, demographics.pwds],
+          backgroundColor: ['#06b6d4', '#4f46e5', '#f59e0b', '#dc3545'],
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '62%',
+        plugins: {
+          legend: { position: 'bottom' },
+        },
+      },
+    });
+  }
+})();
+</script>
+{% endblock %}

@@ -6,8 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta http-equiv="X-UA-Compatible" content="ie=edge" />
   <title>
-    Sign in - Azuelo Technology
+    Sign in - SafeZone
   </title>
+  <link rel="icon" href="{% static 'images/favicon.png' %}?v=2" type="image/png" />
+  <link rel="shortcut icon" href="{% static 'images/favicon.png' %}?v=2" type="image/png" />
   <link href="{% static 'libs/jsvectormap/dist/jsvectormap.css' %}" rel="stylesheet" />
   <link href="{% static 'css/tabler.css' %}" rel="stylesheet" />
   <link href="{% static 'css/tabler-flags.css' %}" rel="stylesheet" />
@@ -67,6 +69,11 @@
   Don't have an account?
   <a href="{% url 'register' %}" class="text-primary fw-bold">Register</a>
  </div> -->
+
+  <div class="text-center text-secondary mt-1">
+    Just checking the live situation?
+    <a href="{% url 'evacuation:evacuation_list' %}" class="text-primary fw-bold">Open the Public Evacuation Map</a>
+  </div>
 </div>
 
 {% include 'theme/settings.html' %}

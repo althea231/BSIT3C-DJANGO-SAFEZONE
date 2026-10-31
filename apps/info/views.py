@@ -1,7 +1,6 @@
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.core.paginator import Paginator
 from django.core.exceptions import ValidationError
@@ -9,7 +8,8 @@ from django.core.validators import validate_email
 from django.db import IntegrityError
 from django.db.models import Q
 
-from apps.scoping import scoped_info, scoped_infos
+from apps.scoping import scoped_evacuation_centers, scoped_info, scoped_infos
+from apps.core.decorators import staff_required
 from .models import Info
 
 MIN_AGE = 1
@@ -24,12 +24,16 @@ def _parse_age(raw_age):
         return None
 
 
-@login_required(login_url='login')
+@staff_required
 def info_list_page(request):
     """Render the searchable, paginated info list for the signed-in user."""
     query = request.GET.get('q', '').strip()
 
-    infos_list = scoped_infos(request.user).order_by('name')
+    infos_list = (
+        scoped_infos(request.user)
+        .select_related('evacuation_center')
+        .order_by('name')
+    )
 
     if query:
         infos_list = infos_list.filter(
@@ -45,10 +49,11 @@ def info_list_page(request):
     return render(request, 'info.html', {
         'infos': infos,
         'query': query,
+        'centers': scoped_evacuation_centers(request.user).order_by('name'),
     })
 
 
-@login_required(login_url='login')
+@staff_required
 def info_list_ajax(request):
     """Return the signed-in user's filtered info records as paginated JSON."""
     query = request.GET.get('q', '').strip()
@@ -65,7 +70,10 @@ def info_list_ajax(request):
     paginator = Paginator(infos_list, 10)
     page_number = request.GET.get('page', 1)
     infos = paginator.get_page(page_number)
-    data = list(infos.object_list.values('id', 'name', 'age', 'address', 'email'))
+    data = list(infos.object_list.values(
+        'id', 'name', 'age', 'address', 'email', 'pwd', 'family_head',
+        'evacuation_center', 'evacuation_center__name',
+    ))
     return JsonResponse({
         'data': data,
         'has_next': infos.has_next(),
@@ -76,7 +84,7 @@ def info_list_ajax(request):
     })
 
 
-@login_required(login_url='login')
+@staff_required
 def info_get_ajax(request, pk):
     """Return one of the signed-in user's info records as JSON."""
     info = scoped_info(request.user, pk)
@@ -86,10 +94,16 @@ def info_get_ajax(request, pk):
         'age': info.age,
         'address': info.address,
         'email': info.email,
+        'pwd': info.pwd,
+        'family_head': info.family_head,
+        'evacuation_center': info.evacuation_center_id,
+        'evacuation_center_name': (
+            info.evacuation_center.name if info.evacuation_center_id else ''
+        ),
     })
 
 
-@login_required(login_url='login')
+@staff_required
 @require_POST
 def info_save_ajax(request):
     """Validate and create or update an info record, returning its data as JSON."""
@@ -106,6 +120,9 @@ def info_save_ajax(request):
     age = request.POST.get('age', '').strip()
     address = request.POST.get('address', '').strip()
     email = request.POST.get('email', '').strip()
+    family_head = request.POST.get('family_head', '').strip()
+    pwd = request.POST.get('pwd') in ('on', 'true', 'True', '1')
+    center_raw = request.POST.get('evacuation_center', '').strip()
 
     if not name:
         return JsonResponse({'error': 'Name is required.'}, status=400)
@@ -130,10 +147,36 @@ def info_save_ajax(request):
         except ValidationError:
             return JsonResponse({'error': 'Enter a valid email address.'}, status=400)
 
+    # Staff may only check an evacuee in to a center they manage (or leave the
+    # record unassigned when they do not manage any center yet).
+    evacuation_center = None
+    if center_raw:
+        if not center_raw.isdigit():
+            return JsonResponse({'error': 'Select a valid evacuation center.'}, status=400)
+        evacuation_center = (
+            scoped_evacuation_centers(request.user).filter(pk=int(center_raw)).first()
+        )
+        if evacuation_center is None:
+            return JsonResponse({'error': 'Select a valid evacuation center.'}, status=400)
+    elif not info.pk:
+        managed_centers = scoped_evacuation_centers(request.user)
+        center_count = managed_centers.count()
+        if center_count == 1:
+            # Unambiguous: only one center exists, so use it automatically.
+            evacuation_center = managed_centers.first()
+        elif center_count > 1:
+            return JsonResponse(
+                {'error': 'Select the evacuation center this evacuee is checked in to.'},
+                status=400
+            )
+
     info.name = name
     info.age = age_value
     info.address = address
     info.email = email
+    info.family_head = family_head
+    info.pwd = pwd
+    info.evacuation_center = evacuation_center
 
     if not info.pk:
         info.user = request.user
@@ -158,10 +201,15 @@ def info_save_ajax(request):
         'age': info.age,
         'address': info.address,
         'email': info.email,
+        'pwd': info.pwd,
+        'evacuation_center': info.evacuation_center_id,
+        'evacuation_center_name': (
+            info.evacuation_center.name if info.evacuation_center_id else ''
+        ),
     })
 
 
-@login_required(login_url='login')
+@staff_required
 @require_POST
 def info_delete_ajax(request, pk):
     """Delete the specified signed-in user's info record and confirm as JSON."""
