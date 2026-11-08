@@ -1,6 +1,9 @@
 SAFEZONE: AN INTERACTIVE WEB AND PROGRESSIVE WEB APPLICATION FOR GOCE COMMUNITY-BASED DISASTER RESPONSE AND EVACUATION MAPPING
+
 CONCEPT PAPER
+
 INTRODUCTION
+
 Background of the Project
 The community of Galicia, Ilog, Negros Occidental frequently encounters severe challenges during natural calamities, particularly severe typhoons and sudden heavy flooding. During these emergency situations, affected residents struggle to identify operational evacuation centers, accessible safe travel routes, and active flood-prone hazard areas in real time.
 
@@ -8,9 +11,12 @@ The current landscape predominantly relies on traditional dissemination channels
 
 
 To address these critical communication and navigation gaps, an information technology solution is required. The proposed project will introduce SafeZone, an interactive web application. SafeZone will provide accessible, real-time spatial visualization and critical safety data directly to members of the Galicia community and disaster response teams. By leveraging modern web-based Geographic Information System (GIS) tools, the system will offer access to dynamic location updates, safe navigation paths, and disaster preparedness guidelines.
+
 Statement of the Problem or Project Objectives
+
 Main Objective
 The main objective of this project is to design, develop, and evaluate SafeZone, an interactive web application designed to map evacuation centers, flood-prone paths, and emergency hazard zones for the Galicia community during typhoons and natural calamities.
+
 Specific Technical Objectives
 1.	The project will develop an interactive web interface incorporating dynamic map visualization utilizing Leaflet.js to display evacuation centers in the Galicia community, flood paths, and emergency hazard zones.
 2.	The project will integrate an administrative geotagging module to pin emergency hazard zones, active shelters, and risk points using precise spatial coordinates.
@@ -33,6 +39,7 @@ This project directly aligns with the Institutional IT and Governance Research p
 Sustainable Development Goal (SDG) Alignment
 ●	SDG 11: Sustainable Cities and Communities: SafeZone will strengthen Galicia community disaster resilience by providing accessible digital spatial mapping, emergency safety guidance, and real-time navigation toward safety hubs.
 ●	SDG 13: Climate Action: The platform will enhance climate change mitigation and emergency response readiness through proactive mapping of flood-prone areas, hazard zones, and structured evacuation procedures.
+
 SCOPE AND LIMITATIONS
 System Scope & Technical Architecture
 The SafeZone platform will focus on providing spatial awareness and emergency document access for disaster management within the Galicia community. The technical scope and system architecture are summarized in the structured breakdown below:
@@ -46,6 +53,7 @@ Technology Stack	• Frontend: HTML5, CSS3, JavaScript (ES6+)
 • Storage: LocalStorage / IndexedDB •Document Rendering: Local PDF/Image rendering scripts
 Target Users	• Residents of the Galicia community 
 •LGU Disaster Risk Reduction Officers •Emergency Response and Rescue Teams
+
 System Limitations
 To ensure project feasibility within the designated capstone development timeline, the following limitations are explicitly defined:
 
