@@ -44,6 +44,7 @@ Technology Stack	• Frontend: HTML5, CSS3, JavaScript (ES6+)
 • Storage: LocalStorage / IndexedDB •Document Rendering: Local PDF/Image rendering scripts
 Target Users	• Residents of the Galicia community 
 •LGU Disaster Risk Reduction Officers •Emergency Response and Rescue Teams
+
 System Scope & Technical Architecture
 The SafeZone platform will focus on providing spatial awareness and emergency document access for disaster management within the Galicia community. The technical scope and system architecture are summarized in the structured breakdown below:
 
